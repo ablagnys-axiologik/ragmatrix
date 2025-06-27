@@ -1,8 +1,10 @@
-package com.bnpp.pf.uk.comp.devops.ragmatrix.service;
+package com.example.dashboard.service;
 
 import com.example.dashboard.model.RagStatus;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -59,24 +61,9 @@ public class GitLabService {
               projects(first: 20) {
                 nodes {
                   nameWithNamespace
-                  pathWithNamespace
+                  fullPath
                   archived
-                  repository {
-                    branches(first: 50) {
-                      nodes {
-                        name
-                        commit { authoredDate }
-                        pipelines(first: 1) {
-                          nodes {
-                            id status
-                            jobs(first: 10) {
-                              nodes { name status }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
+                  id
                 }
               }
             }
@@ -89,9 +76,9 @@ public class GitLabService {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(gitlabToken);
-            headers.set("Content-Type", "application/json");
+            headers.setContentType(MediaType.APPLICATION_JSON);
 
-            org.springframework.http.HttpEntity<Map<String, Object>> entity = new org.springframework.http.HttpEntity<>(requestBody, headers);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
             Map response = restTemplate.postForObject(graphqlEndpoint, entity, Map.class);
 
@@ -109,11 +96,6 @@ public class GitLabService {
             return Mono.error(new RuntimeException("GraphQL query failed: " + e.getMessage()));
         }
     }
-        } catch (Exception e) {
-            e.printStackTrace();
-            return Mono.error(new RuntimeException("GraphQL query failed"));
-        }
-    }
 
     private List<RagStatus> parseProjects(Map<String, Object> response) {
         try {
@@ -128,13 +110,24 @@ public class GitLabService {
                 if ((Boolean) project.getOrDefault("archived", false)) continue;
 
                 String name = (String) project.get("nameWithNamespace");
-                String path = (String) project.get("pathWithNamespace");
+                String path = (String) project.get("fullPath");
+                Integer projectId = Integer.parseInt(((String) project.get("id")).replace("gid://gitlab/Project/", ""));
 
-                Map<String, Object> repo = (Map<String, Object>) project.get("repository");
-                if (repo == null || !repo.containsKey("branches")) continue;
+                // Now call REST API for branches
+                String url = UriComponentsBuilder.fromHttpUrl(gitlabUrl)
+                        .path("/api/v4/projects/" + projectId + "/repository/branches")
+                        .build().toUriString();
 
-                Map<String, Object> branchesMap = (Map<String, Object>) repo.get("branches");
-                List<Map<String, Object>> branches = (List<Map<String, Object>>) branchesMap.get("nodes");
+                HttpHeaders headers = new HttpHeaders();
+                headers.setBearerAuth(gitlabToken);
+                HttpEntity<String> entity = new HttpEntity<>(headers);
+
+                List<Map<String, Object>> branches = restTemplate.exchange(
+                        url,
+                        org.springframework.http.HttpMethod.GET,
+                        entity,
+                        List.class
+                ).getBody();
 
                 List<Long> featureAges = new ArrayList<>();
                 List<Long> releaseAges = new ArrayList<>();
@@ -144,7 +137,7 @@ public class GitLabService {
                     Map<String, Object> commit = (Map<String, Object>) branch.get("commit");
                     if (commit == null) continue;
 
-                    String authoredDateStr = (String) commit.get("authoredDate");
+                    String authoredDateStr = (String) commit.get("committed_date");
                     if (authoredDateStr == null) continue;
 
                     ZonedDateTime authoredDate = ZonedDateTime.parse(authoredDateStr, DateTimeFormatter.ISO_DATE_TIME);
