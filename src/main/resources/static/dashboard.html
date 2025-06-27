@@ -1,0 +1,138 @@
+import React, { useEffect, useState } from "react";
+import { Table, TableHeader, TableBody, TableRow, TableCell } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+export default function GitLabDashboard() {
+  const [groupId, setGroupId] = useState("");
+  const [data, setData] = useState([]);
+  const [filtered, setFiltered] = useState([]);
+
+  useEffect(() => {
+    if (!groupId) return;
+    fetch(`/api/status?groupId=${groupId}`)
+      .then((res) => res.json())
+      .then(setData)
+      .catch(console.error);
+  }, [groupId]);
+
+  useEffect(() => {
+    setFiltered(data);
+  }, [data]);
+
+  const statusColor = (val) =>
+    val === "SUCCESS" || val === "passed"
+      ? "text-green-600"
+      : val === "failed"
+      ? "text-red-600"
+      : val === "running"
+      ? "text-yellow-600"
+      : "text-gray-500";
+
+  const handleExportCSV = () => {
+    const rows = [
+      [
+        "Repo", "GitFlow", "Master Protected", "Develop Protected",
+        "Feature Age Avg", "Feature Age P95", "Release Age Avg", "Release Age P95",
+        "Branch", "Pipeline Status", "Pipeline URL", "Sonar", "Fortify", "NexusIQ", "Sysdig"
+      ]
+    ];
+    data.forEach((repo) => {
+      repo.branches.forEach((branch) => {
+        rows.push([
+          repo.repoName, repo.gitflowCompliant, repo.masterProtected, repo.developProtected,
+          repo.featureAge?.avg ?? "", repo.featureAge?.p95 ?? "", repo.releaseAge?.avg ?? "", repo.releaseAge?.p95 ?? "",
+          branch.branchName, branch.pipelineStatus, branch.pipelineUrl,
+          branch.qualityGates?.Sonar ?? "", branch.qualityGates?.Fortify ?? "",
+          branch.qualityGates?.NexusIQ ?? "", branch.qualityGates?.Sysdig ?? ""
+        ]);
+      });
+    });
+    const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "dashboard.csv";
+    a.click();
+  };
+
+  return (
+    <div className="p-6">
+      <div className="flex gap-2 mb-4">
+        <Input
+          placeholder="Enter GitLab Group ID"
+          value={groupId}
+          onChange={(e) => setGroupId(e.target.value)}
+        />
+        <Button onClick={handleExportCSV}>Export CSV</Button>
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableCell>Repo / Branch</TableCell>
+            <TableCell>GitFlow</TableCell>
+            <TableCell>Master</TableCell>
+            <TableCell>Develop</TableCell>
+            <TableCell>Feature Age</TableCell>
+            <TableCell>Release Age</TableCell>
+            <TableCell>Build</TableCell>
+            <TableCell>Sonar</TableCell>
+            <TableCell>Fortify</TableCell>
+            <TableCell>NexusIQ</TableCell>
+            <TableCell>Sysdig</TableCell>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filtered.map((repo) => (
+            <>
+              <TableRow className="font-bold">
+                <TableCell>
+                  <a
+                    href={`https://gitlab.com/${repo.repoPath}`}
+                    className="text-blue-600 hover:underline"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {repo.repoName}
+                  </a>
+                </TableCell>
+                <TableCell>{repo.gitflowCompliant ? "✅" : "❌"}</TableCell>
+                <TableCell>{repo.masterProtected ? "✅" : "❌"}</TableCell>
+                <TableCell>{repo.developProtected ? "✅" : "❌"}</TableCell>
+                <TableCell>
+                  {repo.featureAge ? `${repo.featureAge.avg} / ${repo.featureAge.p95}` : "-"}
+                </TableCell>
+                <TableCell>
+                  {repo.releaseAge ? `${repo.releaseAge.avg} / ${repo.releaseAge.p95}` : "-"}
+                </TableCell>
+                <TableCell colSpan={5}></TableCell>
+              </TableRow>
+              {repo.branches?.map((b) => (
+                <TableRow className="text-sm text-muted-foreground">
+                  <TableCell className="pl-8">
+                    <a
+                      href={b.pipelineUrl || `https://gitlab.com/${repo.repoPath}`}
+                      className="text-blue-500 hover:underline"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {b.branchName}
+                    </a>
+                  </TableCell>
+                  <TableCell colSpan={3}></TableCell>
+                  <TableCell colSpan={1}></TableCell>
+                  <TableCell colSpan={1}></TableCell>
+                  <TableCell className={statusColor(b.pipelineStatus)}>{b.pipelineStatus}</TableCell>
+                  <TableCell className={statusColor(b.qualityGates?.Sonar)}>{b.qualityGates?.Sonar}</TableCell>
+                  <TableCell className={statusColor(b.qualityGates?.Fortify)}>{b.qualityGates?.Fortify}</TableCell>
+                  <TableCell className={statusColor(b.qualityGates?.NexusIQ)}>{b.qualityGates?.NexusIQ}</TableCell>
+                  <TableCell className={statusColor(b.qualityGates?.Sysdig)}>{b.qualityGates?.Sysdig}</TableCell>
+                </TableRow>
+              ))}
+            </>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
