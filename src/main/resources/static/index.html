@@ -2,63 +2,128 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>GitLab RAG Dashboard</title>
+  <title>GitLab CI RAG Dashboard</title>
   <style>
-    body { font-family: sans-serif; }
-    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-    th, td { border: 1px solid #ccc; padding: 6px; }
-    .green { background: #c8e6c9; }
-    .amber { background: #fff9c4; }
-    .red { background: #ffcdd2; }
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    input, button {
+      margin: 0.5em 0;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 1em;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 6px;
+      text-align: left;
+    }
+    .sub-row {
+      background-color: #f9f9f9;
+    }
+    .green { background-color: #c8e6c9; }
+    .amber { background-color: #fff9c4; }
+    .red { background-color: #ffcdd2; }
   </style>
 </head>
 <body>
-<h2>GitLab RAG Dashboard</h2>
-<label for="groupId">Select GitLab Project Group ID: </label>
-<select name="groupId" id="groupId">
-  <option value="160703">Manage Creation</option>
-  <option value="155598">Common Utility Services</option>
-</select>
-<button onclick="load()">Load</button>
-<button onclick="downloadCSV()">Export CSV</button>
-<table id="result">
-  <thead>
-  <tr><th>Repo</th><th>f/* Avg</th><th>f/* 95%</th><th>r/* Avg</th><th>r/* 95%</th></tr>
-  </thead>
-  <tbody></tbody>
-</table>
+
+<h2>GitLab RAG Matrix</h2>
+<label>GitLab Group ID: <input type="text" id="groupId" /></label>
+<br>
+<label>Filter: <input type="text" id="filterText" placeholder="Repo or branch..." /></label>
+<br>
+<button onclick="loadData()">Load</button>
+<button onclick="exportCSV()">Export CSV</button>
+
+<table id="resultTable"></table>
+
 <script>
-  async function load() {
-    const groupId = document.getElementById('groupId').value;
-    const res = await fetch(`/api/status?groupId=${groupId}`);
-    const data = await res.json();
-    const tbody = document.querySelector('tbody');
-    tbody.innerHTML = '';
-    data.forEach(d => {
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td>${d.name}</td>
-        <td class="${rag(d.featureStats.avg)}">${d.featureStats.avg ?? ''}</td>
-        <td class="${rag(d.featureStats.p95)}">${d.featureStats.p95 ?? ''}</td>
-        <td class="${rag(d.releaseStats.avg)}">${d.releaseStats.avg ?? ''}</td>
-        <td class="${rag(d.releaseStats.p95)}">${d.releaseStats.p95 ?? ''}</td>`;
-      tbody.appendChild(row);
-    });
+async function loadData() {
+  const groupId = document.getElementById("groupId").value;
+  const filter = document.getElementById("filterText").value.toLowerCase();
+  const res = await fetch(`/api/status?groupId=${groupId}`);
+  const data = await res.json();
+  renderTable(data, filter);
+}
+
+function renderTable(data, filter) {
+  const table = document.getElementById("resultTable");
+  table.innerHTML = '';
+
+  const header = `
+    <tr>
+      <th>Repo</th><th>GitFlow OK</th><th>Master Protected</th><th>Develop Protected</th>
+      <th>Feature Age (avg)</th><th>Feature Age (95th)</th>
+      <th>Release Age (avg)</th><th>Release Age (95th)</th>
+      <th>Branch</th><th>Build Status</th><th>Pipeline</th>
+      <th>Sonar</th><th>Fortify</th><th>NexusIQ</th><th>Sysdig</th>
+    </tr>`;
+  table.innerHTML += header;
+
+  for (const repo of data) {
+    const name = repo.projectName;
+    if (filter && !name.toLowerCase().includes(filter)) continue;
+
+    const featureClass = colorClass(repo.featureAge.avg, 3, 14);
+    const releaseClass = colorClass(repo.releaseAge.avg, 3, 14);
+
+    const row = `
+      <tr class="main-row">
+        <td><a href="https://gitlab/${repo.projectPath}" target="_blank">${name}</a></td>
+        <td>${repo.gitflowCompliant ? '✅' : '❌'}</td>
+        <td>${repo.masterProtected ? '✅' : '❌'}</td>
+        <td>${repo.developProtected ? '✅' : '❌'}</td>
+        <td class="${featureClass}">${repo.featureAge.avg ?? '-'}</td>
+        <td class="${featureClass}">${repo.featureAge.p95 ?? '-'}</td>
+        <td class="${releaseClass}">${repo.releaseAge.avg ?? '-'}</td>
+        <td class="${releaseClass}">${repo.releaseAge.p95 ?? '-'}</td>
+        <td colspan="7"></td>
+      </tr>`;
+    table.innerHTML += row;
+
+    for (const b of repo.branches) {
+      if (filter && !b.branchName.toLowerCase().includes(filter)) continue;
+      const gates = b.qualityGates || {};
+      const branchRow = `
+        <tr class="sub-row">
+          <td colspan="8"></td>
+          <td>${b.branchName}</td>
+          <td>${b.pipelineStatus}</td>
+          <td><a href="${b.pipelineUrl}" target="_blank">View</a></td>
+          <td>${gates.Sonar || ''}</td>
+          <td>${gates.Fortify || ''}</td>
+          <td>${gates.NexusIQ || ''}</td>
+          <td>${gates.Sysdig || ''}</td>
+        </tr>`;
+      table.innerHTML += branchRow;
+    }
   }
-  function rag(v) {
-    if (v == null) return ''; return v <= 3 ? 'green' : v <= 14 ? 'amber' : 'red';
-  }
-  function downloadCSV() {
-    let rows = [['Repo','fAvg','f95','rAvg','r95']];
-    document.querySelectorAll('tbody tr').forEach(tr => {
-      rows.push(Array.from(tr.children).map(td => td.textContent));
-    });
-    const csv = rows.map(r => r.join(',')).join('\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    a.download = 'dashboard.csv';
-    a.click();
-  }
+}
+
+function colorClass(value, greenMax, amberMax) {
+  if (value == null) return '';
+  if (value <= greenMax) return 'green';
+  if (value <= amberMax) return 'amber';
+  return 'red';
+}
+
+function exportCSV() {
+  const rows = Array.from(document.querySelectorAll("#resultTable tr"));
+  const csv = rows.map(row =>
+    Array.from(row.querySelectorAll("td,th")).map(td => `"${td.innerText}"`).join(',')
+  ).join('\\n');
+
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'gitlab_rag_matrix.csv';
+  a.click();
+}
 </script>
 </body>
 </html>
