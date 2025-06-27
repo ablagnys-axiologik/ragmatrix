@@ -167,4 +167,32 @@ public class GitLabService {
         long p95 = sorted.get(Math.min(p95Index, sorted.size() - 1));
         return new RagStatus.AgeStats((int) avg, (int) p95);
     }
+
+    private String fetchSonarCoverage(String projectKey, String branch) {
+    try {
+        String apiUrl = UriComponentsBuilder.fromHttpUrl(sonarUrl + "/api/measures/component")
+            .queryParam("component", projectKey)
+            .queryParam("metricKeys", "coverage")
+            .queryParam("branch", branch)
+            .toUriString();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBasicAuth(sonarToken, "");
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+
+        Map response = restTemplate.exchange(apiUrl, HttpMethod.GET, entity, Map.class).getBody();
+        Map component = (Map) response.get("component");
+        List<Map<String, String>> measures = (List<Map<String, String>>) component.get("measures");
+
+        for (Map<String, String> m : measures) {
+            if ("coverage".equals(m.get("metric"))) {
+                return m.get("value") + "%";
+            }
+        }
+    } catch (Exception e) {
+        System.err.println("Failed to fetch Sonar coverage: " + e.getMessage());
+    }
+    return "N/A";
+}
+
 }
