@@ -1,6 +1,6 @@
 package com.bnpp.pf.uk.comp.devops.ragmatrix.service;
 
-import com.bnpp.pf.uk.comp.devops.ragmatrix.model.RagStatus;
+import com.example.dashboard.model.RagStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
@@ -26,6 +26,13 @@ public class GitLabService {
     private final WebClient webClient = WebClient.builder().build();
 
     public Mono<List<RagStatus>> getRagStatus(String groupId) {
+        if (groupId.matches("\d+")) {
+            return resolveGroupPathFromId(groupId)
+                    .flatMap(this::queryGraphqlForRagStatus);
+        } else {
+            return queryGraphqlForRagStatus(groupId);
+        }
+    }
         String query = """
           query getProjects($groupId: ID!) {
             group(fullPath: $groupId) {
@@ -57,6 +64,57 @@ public class GitLabService {
         """;
 
         Map<String, Object> variables = Map.of("groupId", groupId);
+
+        return webClient.post()
+                .uri(gitlabUrl + "/api/graphql")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + gitlabToken)
+                .bodyValue(Map.of("query", query, "variables", variables))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(this::parseProjects);
+    }
+
+    private Mono<String> resolveGroupPathFromId(String numericId) {
+        return webClient.get()
+                .uri(gitlabUrl + "/api/v4/groups/" + numericId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + gitlabToken)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(group -> (String) group.get("full_path"));
+    }
+
+    private Mono<List<RagStatus>> queryGraphqlForRagStatus(String groupPath) {
+        String query = """
+          query getProjects($groupId: ID!) {
+            group(fullPath: $groupId) {
+              projects(first: 20) {
+                nodes {
+                  nameWithNamespace
+                  pathWithNamespace
+                  archived
+                  repository {
+                    branches(first: 50) {
+                      nodes {
+                        name
+                        commit { authoredDate }
+                        pipelines(first: 1) {
+                          nodes {
+                            id status
+                            jobs(first: 10) {
+                              nodes { name status }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        """;
+
+        Map<String, Object> variables = Map.of("groupId", groupPath);
 
         return webClient.post()
                 .uri(gitlabUrl + "/api/graphql")
@@ -118,7 +176,8 @@ public class GitLabService {
     }
 
     protected RagStatus.AgeStats computeStats(List<Long> ages) {
-        if (ages.isEmpty()) return new RagStatus.AgeStats(null, null);
+        if (ages == null || ages.isEmpty()) return new RagStatus.AgeStats(null, null);
+
         double avg = ages.stream().mapToLong(a -> a).average().orElse(0);
         List<Long> sorted = ages.stream().sorted().collect(Collectors.toList());
         int index = (int) Math.ceil(sorted.size() * 0.95) - 1;
