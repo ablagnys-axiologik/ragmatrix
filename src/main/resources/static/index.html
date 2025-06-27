@@ -1,129 +1,224 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>GitLab CI RAG Dashboard</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GitLab RAG Matrix Dashboard</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f4f6f8;
+      color: #333;
+      margin: 0;
+      padding: 2rem;
     }
-    input, button {
-      margin: 0.5em 0;
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
     }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      margin-top: 1em;
+
+    h1 {
+      text-align: center;
+      margin-bottom: 1.5rem;
+      font-size: 2rem;
+      color: #222;
     }
-    th, td {
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .controls input, .controls button {
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      border-radius: 6px;
       border: 1px solid #ccc;
-      padding: 6px;
+    }
+
+    .controls button {
+      background: #007bff;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+
+    .controls button:hover {
+      background: #0056b3;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      padding: 0.6rem;
       text-align: left;
+      border-bottom: 1px solid #eee;
     }
-    .sub-row {
-      background-color: #f9f9f9;
+
+    th {
+      background: #f0f0f0;
+      font-weight: 600;
     }
-    .green { background-color: #c8e6c9; }
-    .amber { background-color: #fff9c4; }
-    .red { background-color: #ffcdd2; }
+
+    tr.sub-row {
+      background: #fafafa;
+      font-size: 0.85rem;
+    }
+
+    a {
+      color: #007bff;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .green { background-color: #d4edda; }
+    .amber { background-color: #fff3cd; }
+    .red { background-color: #f8d7da; }
+
+    .main-row:hover, .sub-row:hover {
+      background-color: #f1f1f1;
+    }
+
+    @media (max-width: 768px) {
+      table {
+        font-size: 0.8rem;
+      }
+
+      .controls {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
   </style>
 </head>
 <body>
+  <div class="container">
+    <h1>GitLab CI RAG Matrix Dashboard</h1>
+    <div class="controls">
+      <label>
+        Group ID:
+        <input type="text" id="groupId" placeholder="e.g. 12345" />
+      </label>
+      <label>
+        Filter:
+        <input type="text" id="filterText" placeholder="Repo or branch..." />
+      </label>
+      <div>
+        <button onclick="loadData()">Load</button>
+        <button onclick="exportCSV()">Export CSV</button>
+      </div>
+    </div>
 
-<h2>GitLab RAG Matrix</h2>
-<label>GitLab Group ID: <input type="text" id="groupId" /></label>
-<br>
-<label>Filter: <input type="text" id="filterText" placeholder="Repo or branch..." /></label>
-<br>
-<button onclick="loadData()">Load</button>
-<button onclick="exportCSV()">Export CSV</button>
+    <table id="resultTable"></table>
+  </div>
 
-<table id="resultTable"></table>
+  <script>
+    async function loadData() {
+      const groupId = document.getElementById("groupId").value;
+      const filter = document.getElementById("filterText").value.toLowerCase();
+      if (!groupId) {
+        alert("Please enter a GitLab group ID");
+        return;
+      }
 
-<script>
-async function loadData() {
-  const groupId = document.getElementById("groupId").value;
-  const filter = document.getElementById("filterText").value.toLowerCase();
-  const res = await fetch(`/api/status?groupId=${groupId}`);
-  const data = await res.json();
-  renderTable(data, filter);
-}
-
-function renderTable(data, filter) {
-  const table = document.getElementById("resultTable");
-  table.innerHTML = '';
-
-  const header = `
-    <tr>
-      <th>Repo</th><th>GitFlow OK</th><th>Master Protected</th><th>Develop Protected</th>
-      <th>Feature Age (avg)</th><th>Feature Age (95th)</th>
-      <th>Release Age (avg)</th><th>Release Age (95th)</th>
-      <th>Branch</th><th>Build Status</th><th>Pipeline</th>
-      <th>Sonar</th><th>Fortify</th><th>NexusIQ</th><th>Sysdig</th>
-    </tr>`;
-  table.innerHTML += header;
-
-  for (const repo of data) {
-    const name = repo.projectName;
-    if (filter && !name.toLowerCase().includes(filter)) continue;
-
-    const featureClass = colorClass(repo.featureAge.avg, 3, 14);
-    const releaseClass = colorClass(repo.releaseAge.avg, 3, 14);
-
-    const row = `
-      <tr class="main-row">
-        <td><a href="https://gitlab/${repo.projectPath}" target="_blank">${name}</a></td>
-        <td>${repo.gitflowCompliant ? '✅' : '❌'}</td>
-        <td>${repo.masterProtected ? '✅' : '❌'}</td>
-        <td>${repo.developProtected ? '✅' : '❌'}</td>
-        <td class="${featureClass}">${repo.featureAge.avg ?? '-'}</td>
-        <td class="${featureClass}">${repo.featureAge.p95 ?? '-'}</td>
-        <td class="${releaseClass}">${repo.releaseAge.avg ?? '-'}</td>
-        <td class="${releaseClass}">${repo.releaseAge.p95 ?? '-'}</td>
-        <td colspan="7"></td>
-      </tr>`;
-    table.innerHTML += row;
-
-    for (const b of repo.branches) {
-      if (filter && !b.branchName.toLowerCase().includes(filter)) continue;
-      const gates = b.qualityGates || {};
-      const branchRow = `
-        <tr class="sub-row">
-          <td colspan="8"></td>
-          <td>${b.branchName}</td>
-          <td>${b.pipelineStatus}</td>
-          <td><a href="${b.pipelineUrl}" target="_blank">View</a></td>
-          <td>${gates.Sonar || ''}</td>
-          <td>${gates.Fortify || ''}</td>
-          <td>${gates.NexusIQ || ''}</td>
-          <td>${gates.Sysdig || ''}</td>
-        </tr>`;
-      table.innerHTML += branchRow;
+      const res = await fetch(`/api/status?groupId=${groupId}`);
+      const data = await res.json();
+      renderTable(data, filter);
     }
-  }
-}
 
-function colorClass(value, greenMax, amberMax) {
-  if (value == null) return '';
-  if (value <= greenMax) return 'green';
-  if (value <= amberMax) return 'amber';
-  return 'red';
-}
+    function renderTable(data, filter) {
+      const table = document.getElementById("resultTable");
+      table.innerHTML = '';
 
-function exportCSV() {
-  const rows = Array.from(document.querySelectorAll("#resultTable tr"));
-  const csv = rows.map(row =>
-    Array.from(row.querySelectorAll("td,th")).map(td => `"${td.innerText}"`).join(',')
-  ).join('\\n');
+      const header = `
+        <tr>
+          <th>Repo</th><th>GitFlow OK</th><th>Master Protected</th><th>Develop Protected</th>
+          <th>Feature Age (avg)</th><th>Feature Age (95th)</th>
+          <th>Release Age (avg)</th><th>Release Age (95th)</th>
+          <th>Branch</th><th>Build</th><th>Pipeline</th>
+          <th>Sonar</th><th>Fortify</th><th>NexusIQ</th><th>Sysdig</th>
+        </tr>`;
+      table.innerHTML += header;
 
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'gitlab_rag_matrix.csv';
-  a.click();
-}
-</script>
+      for (const repo of data) {
+        const name = repo.projectName;
+        if (filter && !name.toLowerCase().includes(filter)) continue;
+
+        const featureClass = colorClass(repo.featureAge?.avg, 3, 14);
+        const releaseClass = colorClass(repo.releaseAge?.avg, 3, 14);
+
+        const row = `
+          <tr class="main-row">
+            <td><a href="https://gitlab/${repo.projectPath}" target="_blank">${name}</a></td>
+            <td>${repo.gitflowCompliant ? '✅' : '❌'}</td>
+            <td>${repo.masterProtected ? '✅' : '❌'}</td>
+            <td>${repo.developProtected ? '✅' : '❌'}</td>
+            <td class="${featureClass}">${repo.featureAge?.avg ?? '-'}</td>
+            <td class="${featureClass}">${repo.featureAge?.p95 ?? '-'}</td>
+            <td class="${releaseClass}">${repo.releaseAge?.avg ?? '-'}</td>
+            <td class="${releaseClass}">${repo.releaseAge?.p95 ?? '-'}</td>
+            <td colspan="7"></td>
+          </tr>`;
+        table.innerHTML += row;
+
+        for (const b of repo.branches || []) {
+          if (filter && !b.branchName.toLowerCase().includes(filter)) continue;
+          const gates = b.qualityGates || {};
+          const branchRow = `
+            <tr class="sub-row">
+              <td colspan="8"></td>
+              <td>${b.branchName}</td>
+              <td>${b.pipelineStatus}</td>
+              <td><a href="${b.pipelineUrl}" target="_blank">View</a></td>
+              <td>${gates.Sonar || ''}</td>
+              <td>${gates.Fortify || ''}</td>
+              <td>${gates.NexusIQ || ''}</td>
+              <td>${gates.Sysdig || ''}</td>
+            </tr>`;
+          table.innerHTML += branchRow;
+        }
+      }
+    }
+
+    function colorClass(value, greenMax, amberMax) {
+      if (value == null) return '';
+      if (value <= greenMax) return 'green';
+      if (value <= amberMax) return 'amber';
+      return 'red';
+    }
+
+    function exportCSV() {
+      const rows = Array.from(document.querySelectorAll("#resultTable tr"));
+      const csv = rows.map(row =>
+        Array.from(row.querySelectorAll("td,th"))
+          .map(td => `"${td.innerText.replace(/"/g, '""')}"`)
+          .join(',')
+      ).join('\\n');
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'gitlab_rag_matrix.csv';
+      a.click();
+    }
+  </script>
 </body>
 </html>
