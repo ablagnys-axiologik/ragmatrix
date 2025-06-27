@@ -4,7 +4,8 @@ import com.example.dashboard.model.RagStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -23,67 +24,35 @@ public class GitLabService {
     @Value("${gitlab.url}")
     private String gitlabUrl;
 
-    private final WebClient webClient = WebClient.builder().build();
+    private final RestTemplate restTemplate = new RestTemplate();
 
     public Mono<List<RagStatus>> getRagStatus(String groupId) {
-        if (groupId.matches("\d+")) {
+        if (groupId.matches("\\d+")) {
             return resolveGroupPathFromId(groupId)
                     .flatMap(this::queryGraphqlForRagStatus);
         } else {
             return queryGraphqlForRagStatus(groupId);
         }
     }
-        String query = """
-          query getProjects($groupId: ID!) {
-            group(fullPath: $groupId) {
-              projects(first: 20) {
-                nodes {
-                  nameWithNamespace
-                  pathWithNamespace
-                  archived
-                  repository {
-                    branches(first: 50) {
-                      nodes {
-                        name
-                        commit { authoredDate }
-                        pipelines(first: 1) {
-                          nodes {
-                            id status
-                            jobs(first: 10) {
-                              nodes { name status }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        """;
-
-        Map<String, Object> variables = Map.of("groupId", groupId);
-
-        return webClient.post()
-                .uri(gitlabUrl + "/api/graphql")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + gitlabToken)
-                .bodyValue(Map.of("query", query, "variables", variables))
-                .retrieve()
-                .bodyToMono(Map.class)
-                .map(this::parseProjects);
-    }
 
     private Mono<String> resolveGroupPathFromId(String numericId) {
-        return webClient.get()
-                .uri(gitlabUrl + "/api/v4/groups/" + numericId)
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + gitlabToken)
-                .retrieve()
-                .bodyToMono(Map.class)
-                .map(group -> (String) group.get("full_path"));
+        String url = UriComponentsBuilder.fromHttpUrl(gitlabUrl)
+                .path("/api/v4/groups/" + numericId)
+                .build().toUriString();
+
+        try {
+            Map group = restTemplate.getForObject(url, Map.class);
+            String fullPath = (String) group.get("full_path");
+            return Mono.just(fullPath);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Mono.error(new RuntimeException("Failed to resolve group path from ID: " + numericId));
+        }
     }
 
     private Mono<List<RagStatus>> queryGraphqlForRagStatus(String groupPath) {
+        String graphqlEndpoint = gitlabUrl + "/api/graphql";
+
         String query = """
           query getProjects($groupId: ID!) {
             group(fullPath: $groupId) {
@@ -115,14 +84,35 @@ public class GitLabService {
         """;
 
         Map<String, Object> variables = Map.of("groupId", groupPath);
+        Map<String, Object> requestBody = Map.of("query", query, "variables", variables);
 
-        return webClient.post()
-                .uri(gitlabUrl + "/api/graphql")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + gitlabToken)
-                .bodyValue(Map.of("query", query, "variables", variables))
-                .retrieve()
-                .bodyToMono(Map.class)
-                .map(this::parseProjects);
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(gitlabToken);
+            headers.set("Content-Type", "application/json");
+
+            org.springframework.http.HttpEntity<Map<String, Object>> entity = new org.springframework.http.HttpEntity<>(requestBody, headers);
+
+            Map response = restTemplate.postForObject(graphqlEndpoint, entity, Map.class);
+
+            // Log entire GraphQL response
+            System.out.println("GraphQL response: " + response);
+
+            if (response.containsKey("errors")) {
+                List errors = (List) response.get("errors");
+                return Mono.error(new RuntimeException("GraphQL errors: " + errors));
+            }
+
+            return Mono.just(parseProjects(response));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Mono.error(new RuntimeException("GraphQL query failed: " + e.getMessage()));
+        }
+    }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Mono.error(new RuntimeException("GraphQL query failed"));
+        }
     }
 
     private List<RagStatus> parseProjects(Map<String, Object> response) {
