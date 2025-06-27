@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GitLab RAG Dashboard</title>
+  <style>
+    body { font-family: sans-serif; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #ccc; padding: 6px; }
+    .green { background: #c8e6c9; }
+    .amber { background: #fff9c4; }
+    .red { background: #ffcdd2; }
+  </style>
+</head>
+<body>
+<h2>GitLab RAG Dashboard</h2>
+<label for="groupId">Select GitLab Project Group ID: </label>
+<select name="groupId" id="groupId">
+  <option value="160703">Manage Creation</option>
+  <option value="155598">Common Utility Services</option>
+</select>
+<button onclick="load()">Load</button>
+<button onclick="downloadCSV()">Export CSV</button>
+<table id="result">
+  <thead>
+  <tr><th>Repo</th><th>f/* Avg</th><th>f/* 95%</th><th>r/* Avg</th><th>r/* 95%</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<script>
+  async function load() {
+    const groupId = document.getElementById('groupId').value;
+    const res = await fetch(`/api/status?groupId=${groupId}`);
+    const data = await res.json();
+    const tbody = document.querySelector('tbody');
+    tbody.innerHTML = '';
+    data.forEach(d => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${d.name}</td>
+        <td class="${rag(d.featureStats.avg)}">${d.featureStats.avg ?? ''}</td>
+        <td class="${rag(d.featureStats.p95)}">${d.featureStats.p95 ?? ''}</td>
+        <td class="${rag(d.releaseStats.avg)}">${d.releaseStats.avg ?? ''}</td>
+        <td class="${rag(d.releaseStats.p95)}">${d.releaseStats.p95 ?? ''}</td>`;
+      tbody.appendChild(row);
+    });
+  }
+  function rag(v) {
+    if (v == null) return ''; return v <= 3 ? 'green' : v <= 14 ? 'amber' : 'red';
+  }
+  function downloadCSV() {
+    let rows = [['Repo','fAvg','f95','rAvg','r95']];
+    document.querySelectorAll('tbody tr').forEach(tr => {
+      rows.push(Array.from(tr.children).map(td => td.textContent));
+    });
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = 'dashboard.csv';
+    a.click();
+  }
+</script>
+</body>
+</html>
